@@ -5,7 +5,7 @@ ChDir _StartDir$
 
 Const CRLF = Chr$(13) + Chr$(10)
 Const H_OK = "HTTP/1.1 200 OK" + CRLF
-Const H_CONTENT_TYPE = "Content-Type: text/html" + CRLF
+Const H_CONTENT_TYPE = "Content-Type: text/html; charset=utf-8" + CRLF
 Const H_CONTENT_LENGTH_0 = "Content-Length: 0" + CRLF
 Const H_OPTIONS = H_OK + H_CONTENT_LENGTH_0 + "Allow: OPTIONS, GET, HEAD, PUT" + CRLF + "Dav: tw-put" + CRLF
 
@@ -28,6 +28,7 @@ End Type
 
 Dim Shared As HTTPRequest EmptyReq
 Dim Shared As HTTPRequest Req
+Dim Shared As Long timers(-100 To 100), clients(-100 To 100)
 
 Sub InspectRequest
     Dim As Integer i
@@ -54,7 +55,7 @@ ParseOpts
 
 Dim As Long host, client
 Dim dat$, req_line$, resp$
-'Dim As Integer ret
+Dim As Integer t
 
 
 host = _OpenHost("TCP/IP:" + Options.Port)
@@ -74,45 +75,184 @@ Do
 
         Get #client, , dat$
 
-        Req = EmptyReq ' empty the Req
-
         ' log incoming
         req_line$ = Left$(dat$, InStr(dat$, CRLF) - 1)
-        Print Date$, Time$ + "  " + _ConnectionAddress(client) + "  " + req_line$;
+        Print "> "; Date$, Time$ + "  "; client; _ConnectionAddress(client) + "  " + req_line$;
         Print " (" + _ToStr$(Len(dat$)) + ")"
 
+        t = _FreeTimer
+        timers(client) = t
+        On Timer(t, 1) CloseClient (client)
+
+        Req = EmptyReq ' empty the Req
         ParseRequest client, dat$
         'InspectRequest
 
         If Req.method = "GET" Then
-            GET_Handler client
-            Close #client
+            Timer(t) On
+            Handle_GET client, t
+            'Close #client
         End If
 
         If Req.method = "PUT" Then
-            PUT_Handler client
-            Close #client
+            Handle_PUT (client)
+            'Close #client
         End If
 
         If Req.method = "OPTIONS" Then
             resp$ = H_OPTIONS + CRLF
             Put #client, , resp$
-            Close #client
+            'Close #client
         End If
 
         If Req.method = "HEAD" Then
             resp$ = H_OK + H_CONTENT_TYPE
             resp$ = resp$ + "Content-Length: " + _ToStr$(GetFileLength("." + Req.path)) + CRLF + CRLF
             Put #client, , resp$
-            Close #client
+            'Close #client
         End If
 
     End If
-    _Limit 12
+    _Limit 30
 Loop
 
+System
 
 
+
+Sub Handle_GET (client As Long, t As Integer)
+    Print "client:"; client; ", timer:"; t
+    Print "connected("; client; ")=", _Connected(client)
+    Dim As String fname, resp, msg
+    Dim As String contents
+    'on timer(t, 1) CloseClient client,t
+
+    If Req.path = "/" Then
+        fname = _Files$("*.htm*")
+        msg = "<!DOCTYPE HTML><html><head></head><body><ul>"
+        While fname <> ""
+            msg = msg + "<li><a href='" + fname + "'>" + fname + "</a></li>"
+            fname = _Files$
+        Wend
+        msg = msg + "</ul></body></html>"
+        resp = H_OK + H_CONTENT_TYPE
+        resp = resp + "Content-Length: " + _ToStr$(Len(msg)) + CRLF + CRLF
+        Put #client, , resp
+        Put #client, , msg
+    End If
+    fname = "." + Req.path
+    If _FileExists(fname) Then
+        contents = _ReadFile$(fname)
+        Print "length of read contents:"; Len(contents)
+        resp = H_OK
+        resp = resp + H_CONTENT_TYPE ' + CRLF + CRLF
+        resp = resp + "Content-Length: " + _ToStr$(Len(contents)) + CRLF + CRLF
+        resp = resp + contents
+        'Print "<"; resp; ">"
+        Put #client, , resp
+        'Put #client, , contents
+        'for t = 1 to len(contents)
+        '    c = mid$(contents, t, 1)
+        '    put #client,, c
+        'next
+    Else
+        resp = "HTTP/1.1 404 Not Found" + CRLF + CRLF
+        Put #client, , resp
+    End If
+    'Print "_Connected("; client; "):"; _Connected(client)
+    'dim as integer cnt
+    'do
+    ''    cnt = cnt + 1
+    '    if cnt > 10000 then exit do
+    'loop while _connected(client)
+    'print "count:";c
+    'Close #client
+End Sub
+
+
+Sub Handle_PUT (client As Long)
+    Dim As String resp
+    Dim As String fname
+    Dim As Long body_len
+    body_len = Len(Req.body)
+    fname = "." + Req.path
+    If body_len <> Req.content_length Then
+        Print "LENGTHS DO NOT MATCH. Not saving.."
+        resp = "HTTP/1.1 500 Internal Server Error"
+    Else
+        _WriteFile fname, Req.body
+        Print "   wrote " + _ToStr$(body_len) + " bytes to " + fname + "."
+        resp = "HTTP/1.1 201 Created" + CRLF
+    End If
+    Put #client, , resp
+    '_writefile "body.html", Req.body
+End Sub
+
+
+Sub ParseOpts
+    Dim As Integer i
+    ' Pass 1 - set options
+    For i = 0 To _CommandCount
+        Select Case Command$(i)
+            Case "-h", "--help"
+                PrintUsage
+                System
+            Case "-p"
+                If PortValid(Command$(i + 1)) Then
+                    Options.Port = Command$(i + 1)
+                Else
+                    PrintUsage
+                    System
+                End If
+        End Select
+        If InStr(Command$(i), "html") Then
+            Options.target = Command$(i)
+        End If
+    Next
+    ' Pass 2
+    For i = 0 To _CommandCount
+        Select Case Command$(i)
+            Case "-o", "-open", "--open"
+                Shell _DontWait _Hide "open http://localhost:" + Options.Port + "/" + Options.target
+        End Select
+    Next
+End Sub
+
+
+Function PortValid (port As String)
+    Dim As Integer p, ret
+    p = Val(port, Integer)
+    If p _AndAlso p > 1024 Then
+        ret = _TRUE
+    Else
+        Print "Invalid port: " + port
+    End If
+    PortValid = ret
+End Function
+
+
+Sub PrintUsage
+    Print
+    Print Command$(0) + ": a sigle-file server for Tiddlywiki."
+    Print
+    Print "Usage: ./server [-p port] [-o] [file.html]"
+    Print Chr$(9) + "-p port - the port number to use for the host. Defaults to 8080."
+    Print Chr$(9) + "-o - open a browser window."
+    Print Chr$(9) + "file.html - a TiddlyWiki file to serve."
+End Sub
+
+
+Sub Inc (n As Integer)
+    n = n + 1
+End Sub
+
+Sub CloseClient (client As Long)
+    Print "closing client "; client
+    Close #client
+    Print "stopping timer "; timers(client)
+    Timer(timers(client)) Off
+    Timer(timers(client)) Free
+End Sub
 
 Sub ParseRequest (client As Long, dat As String)
     ' todo - should be a function that returns success/failure?
@@ -180,106 +320,3 @@ Function GetFileLength (fname As String)
     End If
 End Function
 
-
-Sub GET_Handler (client As Long)
-    Dim As String fname, resp, msg
-    If Req.path = "/" Then
-        fname = _Files$("*.htm*")
-        msg = "<ul>"
-        While fname <> ""
-            msg = msg + "<li> <a href='" + fname + "'>" + fname + "</a></li>"
-            fname = _Files$
-        Wend
-        msg = msg + "</ul>"
-        resp = H_OK + H_CONTENT_TYPE
-        resp = resp + "Content-Length: " + _ToStr$(Len(msg)) + CRLF + CRLF
-        Put #client, , resp
-        Put #client, , msg
-    End If
-    fname = "." + Req.path
-    If _FileExists(fname) Then
-        resp = H_OK + H_CONTENT_TYPE
-        resp = resp + "Content-Length: " + _ToStr$(GetFileLength(fname)) + CRLF + CRLF
-        resp = resp + _ReadFile$(fname)
-    Else
-        resp = "HTTP/1.1 404 Not Found" + CRLF + CRLF
-    End If
-    Put #client, , resp
-End Sub
-
-
-Sub PUT_Handler (client As Long)
-    Dim resp$
-    Dim As String fname
-    Dim As Long body_len
-    body_len = Len(Req.body)
-    fname = "." + Req.path
-    If body_len <> Req.content_length Then
-        Print "LENGTHS DO NOT MATCH. Not saving.."
-        resp$ = "HTTP/1.1 500 Internal Server Error"
-    Else
-        _WriteFile fname, Req.body
-        Print "   wrote " + _ToStr$(body_len) + " bytes to " + fname + "."
-        resp$ = "HTTP/1.1 201 Created" + CRLF
-    End If
-    Put #client, , resp$
-    '_writefile "body.html", Req.body
-End Sub
-
-
-Sub ParseOpts
-    Dim As Integer i
-    ' Pass 1 - set options
-    For i = 0 To _CommandCount
-        Select Case Command$(i)
-            Case "-h", "--help"
-                PrintUsage
-                System
-            Case "-p"
-                If PortValid(Command$(i + 1)) Then
-                    Options.Port = Command$(i + 1)
-                Else
-                    PrintUsage
-                    System
-                End If
-        End Select
-        If InStr(Command$(i), "html") Then
-            Options.target = Command$(i)
-        End If
-    Next
-    ' Pass 2
-    For i = 0 To _CommandCount
-        Select Case Command$(i)
-            Case "-o", "-open", "--open"
-                Shell _DontWait _Hide "open http://localhost:" + Options.Port + "/" + Options.target
-        End Select
-    Next
-End Sub
-
-
-Function PortValid (port As String)
-    Dim As Integer p, ret
-    p = Val(port, Integer)
-    If p _AndAlso p > 1024 Then
-        ret = _TRUE
-    Else
-        Print "Invalid port: " + port
-    End If
-    PortValid = ret
-End Function
-
-
-Sub PrintUsage
-    Print
-    Print Command$(0) + ": a sigle-file server for Tiddlywiki."
-    Print
-    Print "Usage: ./server [-p port] [-o] [file.html]"
-    Print Chr$(9) + "-p port - the port number to use for the host. Defaults to 8080."
-    Print Chr$(9) + "-o - open a browser window."
-    Print Chr$(9) + "file.html - a TiddlyWiki file to serve."
-End Sub
-
-
-Sub Inc (n As Integer)
-    n = n + 1
-End Sub
