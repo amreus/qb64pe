@@ -1,1 +1,1 @@
-make && QB64PE_NOPROMPT=y ./test_strings
+make -s  && QB64PE_NOPROMPT=y ./test_strings
