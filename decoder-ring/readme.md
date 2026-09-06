@@ -1,5 +1,6 @@
-stoopid coder/decoder
+Dumb, recognizable encoder/decoder
 
 Usage:
-  cry <file>
+
+`cry FILE`
 
