@@ -1,120 +1,75 @@
-'' Bocco is <a href="https://ashkenas.com/docco/">Docco</a> written in QB64pe for QB64pe.
 
+' <h2>Bocco</h2> is <a href="https://ashkenas.com/docco/">Docco</a> written in QB64pe for QB64pe.
 
 Option _Explicit
 $Console:Only
 
-$Embed:'./res/head.html','template'
+$Embed:'./res/template.html','template'
 
 '$Include:'/home/jim/code/qb64pe/qb64pe-repo/lib/strings/cut.bas'
 
-'' A Comment.
+
+' Top level Types and Variables.
 
 Type SectionType
     docs As String
     code As String
 End Type
 
-Type SectionList
-    size As Integer
-    sections(1000) As SectionType
-End Type
+Dim Shared Sections(32767) As SectionType
+Dim Shared SectionSize As Integer
 
-
-Dim f As Long: f = FreeFile
 Dim As String ln, first, rest, docsText, codeText
-Dim As Integer idx, ok, i, hasCode
+Dim As Integer ok, hasCode
 
-Dim code(1000) As String
-Dim comments(1000) As String
-'Dim EmptySection As SectionType
-Dim Shared Sections As SectionList
+Const DELIM = Chr$(39) + Chr$(32)
 
-'' Open the file.
-Open Command$(1) For Input As #f
+' Open the source code file given on the command line.
+Dim f As Long: f = FreeFile
+Open _StartDir$ + Command$(1) For Input As #f
 
-'' While there are more lines to read..
+' Main Section
+' Parse the file into an Array of SectionType.
 While Not EOF(f)
     Line Input #f, ln
-    ok = Cut(ln, "''", first, rest)
-    'first = LTrim$(first)
-    'print first
-    'If ok _AndAlso Mid$(first, 1) = "'" Then
-    If Left$(ln, 2) = "''" Then
-        'comments(idx) = rest
+    'ln = _Trim$(ln)
+    ok = Cut(ln, DELIM, first, rest)
+    'If Left$(ltrim$(ln), 2) = DELIM Then
+    If ok Then
         If hasCode Then
-            Save Sections, docsText, codeText
+            Save Sections(), docsText, codeText
             hasCode = _FALSE
             docsText = ""
             codeText = ""
         End If
-        docsText = docsText + rest + Chr$(10)
+        docsText = docsText + "<p>" + rest + "</p>" + Chr$(10)
     Else
-        'code(idx) = ln
         hasCode = _TRUE
         codeText = codeText + ln + Chr$(10)
     End If
-    'idx = idx + 1
 Wend
-Save Sections, docsText, codeText
+Save Sections(), docsText, codeText
 
+' Close the file, print the html, and exit the program.
 Close #f
 
-'' Split the html template into header and tail
-Dim As String t, header, trailer
-t = _Embedded$("template")
-ok = Cut(t, "CONTENT", header, trailer)
-
-
-'' Output the html
-
-'' todo: Sections.sections is kind of awkward.
-
-Print header
-For i = 0 To Sections.size
-    Print Sections.sections(i).docs
-    Print "<pre>"
-    Print Sections.sections(i).code
-    Print "</pre>"
-    Print "<br>"
-Next
-Print trailer
-
-'' Exit program
-System
-
-
-'' The rest is unused code
-
-'Print _Embedded$("header")
-Print "<div id=container>"
-Print "<div id=background></div>"
-Print "<table>"
-For i = 0 To Sections.size
-    Print "<tr id=" + Chr$(34) + "section-" + _ToStr$(i) + Chr$(34) + ">"
-    Print "<td class=" + Chr$(34) + "docs" + Chr$(34) + ">" + Sections.sections(i).docs + "</td>"
-    Print "<td class=" + Chr$(34) + "code" + Chr$(34) + ">" + Sections.sections(i).code + "</td>"
-    Print "</tr>"
-Next
-Print "</table>"
-Print "</div>"
-Print "</body></html>"
+OutputHTML2
 
 System
 
-f = FreeFile
+' <h3>Procedures</h3>
 
-Open "bocco.html" For Output As #f
-'Print #f, _Embedded$("header")
-Print #f, "<table>"
-For i = 0 To idx
-    Print #f, "<tr><td>", comments(i), "</td><td><pre>", Escape$(code(i)), "</pre></td></tr>"
-Next
-Print #f, "</table>"
-Close #f
+' Save appends the doc and code textsto the Sections array.
+Sub Save (sec_list() As SectionType, docs As String, code As String)
+    If Len(docs) = 0 _AndAlso Len(code) = 0 Then
+        Exit Sub
+    End If
+    sec_list(SectionSize).docs = docs
+    sec_list(SectionSize).code = Escape$(code)
+    SectionSize = SectionSize + 1
+End Sub
 
-
-'' todo: need to escape more than <
+' todo: need to escape more than <
 Function Escape$ (str_html As String)
     Dim As Integer i
     Dim As String s, first, rest
@@ -132,12 +87,63 @@ Function Escape$ (str_html As String)
     Escape$ = s
 End Function
 
-Sub Save (sec_list As SectionList, docs As String, code As String)
-    'Print "saving.."
-    'Print "docs:", docs
-    'Print "code:", code
-    'Print
-    sec_list.sections(sec_list.size).docs = docs
-    sec_list.sections(sec_list.size).code = Escape$(code)
-    sec_list.size = sec_list.size + 1
+' Vertical layout (docco classic)
+Sub OutputHTML
+    Dim As Integer i
+    PrintHeader
+    For i = 0 To SectionSize
+        Print "<div id=" + Chr$(34) + "section-" + _ToStr$(i) + Chr$(34) + ">"
+        Print Sections(i).docs
+        Print "<pre>"
+        Print Sections(i).code
+        Print "</pre>"
+        Print "<br>"
+        Print "</div>"
+    Next
+    PrintTrailer
 End Sub
+
+' Horizontal layout (docco parallel)
+Sub OutputHTML2
+    Dim As Integer i
+    PrintHeader
+    Print "<table>"
+    For i = 0 To SectionSize
+        Print "<tr id=" + Chr$(34) + "section-" + _ToStr$(i) + Chr$(34) + ">"
+        Print "<td class=" + Chr$(34) + "docs" + Chr$(34) + ">" + Sections(i).docs + "</td>"
+        Print "<td class=" + Chr$(34) + "code" + Chr$(34) + "><pre>" + Sections(i).code + "</pre></td>"
+        Print "</tr>"
+    Next
+    Print "</table>"
+    PrintTrailer
+End Sub
+
+' <tt>PrintHeader</tt> splits the template in 2 printing the first part.
+' The header is retained after the procedure exits.
+
+Sub PrintHeader
+    Static called As Integer
+    Static header As String
+    Dim As Integer ok
+    Dim As String t, trailer
+    If Not called Then
+        t = _Embedded$("template")
+        ok = Cut(t, "CONTENT", header, trailer)
+        called = _TRUE
+    End If
+    Print header
+End Sub
+
+Sub PrintTrailer
+    Static called As Integer
+    Static trailer As String
+    Dim As Integer ok
+    Dim As String t, header
+    If Not called Then
+        t = _Embedded$("template")
+        ok = Cut(t, "CONTENT", header, trailer)
+        called = _TRUE
+    End If
+    Print trailer
+End Sub
+
